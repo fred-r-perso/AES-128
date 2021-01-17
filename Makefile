@@ -8,7 +8,7 @@ EXEC=aestest
 LIB=libaes.a
 SRC=$(wildcard *.c)
 OBJ=$(SRC:.c=.o)
-TESTSUITE_SOURCE := aes_test.c aes_cbc_test.h aes_cbc_test.c
+TESTSUITE_SOURCE := aes_test.c aes_cbc_test.c
 LIB_SRC=$(filter-out $(TESTSUITE_SOURCE),$(wildcard *.c))
 LIB_OBJ=$(LIB_SRC:.c=.o)
 
