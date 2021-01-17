@@ -37,7 +37,8 @@ uint32_t SubWord(uint32_t k);
 void KeyExpansion(uint32_t * expandedKey, uint32_t * key);
 void getRoundKey(uint32_t * expandedKey, uint8_t * roundKey, uint8_t round);
 void ShiftRows(uint8_t * text);
-void do_mult(uint8_t * column);
+void InvShiftRows(uint8_t * text);
+void do_mult(uint8_t * column, const uint8_t * matrix);
 
 /* test functions prototypes */
 /* ------------------------- */
@@ -46,10 +47,12 @@ void test_SubWord();
 void test_KeyExpansion();
 void test_getRoundKey();
 void test_ShiftRows();
+void test_InvShiftRows();
 void test_do_mult();
 
 void test_init();
 void test_encrypt();
+void test_decrypt();
 
 /* test routine */
 /* ------------ */
@@ -61,11 +64,13 @@ int main()
     test_KeyExpansion();
     test_getRoundKey();
     test_ShiftRows();
+    test_InvShiftRows();
     test_do_mult();
 
     /* API */
     test_init();
     test_encrypt();
+    test_decrypt();
 
     return(0);
 }
@@ -383,15 +388,62 @@ void test_ShiftRows()
     }    
 }
 
+void test_InvShiftRows()
+{
+    uint32_t loop = 0;
+    uint8_t fail = 0;
+
+    /* 
+     * AES operates on a 4 × 4 column-major order array of bytes, termed the state.
+     * So in memory, the consecutive bytes are the column.
+     */
+    uint8_t block[16] = {0x00, 0x01, 0x02, 0x03, /* state column 1 */
+                         0x04, 0x05, 0x06, 0x07, /* state column 2 */
+                         0x08, 0x09, 0x0a, 0x0b, /* state column 3 */
+                         0x0c, 0x0d, 0x0e, 0x0f};/* state column 4 */
+
+    uint8_t shifted_block[16] = {0x00, 0x05, 0x0a, 0x0f,
+                                 0x04, 0x09, 0x0e, 0x03,
+                                 0x08, 0x0d, 0x02, 0x07,
+                                 0x0c, 0x01, 0x06, 0x0b};
+
+    InvShiftRows(shifted_block);
+
+    for (loop=0; loop<16; loop++)
+    {   
+        if (loop % 4 == 0)
+        {
+            printf("\n");
+        }
+        printf("%02x ", shifted_block[loop]);
+        if (block[loop] != shifted_block[loop])
+        {
+            fail++;
+            printf("<  ");
+        }
+    }
+
+    if (fail == 0)
+    {
+        printf("\n\n test_InvShiftRows: PASSED\n");
+    }
+    else
+    {
+        printf("\n\n test_InvShiftRows: FAILED\n");
+    }    
+}
+
 void test_do_mult()
 {
+    extern uint8_t MixColumns_Matrix[16];
     /* test vectors : https://en.wikipedia.org/wiki/Rijndael_MixColumns#Test_vectors_for_MixColumn() */
     uint8_t column[4] = {0xdb, 0x13, 0x53, 0x45};
     uint8_t mixed_column[4] = {0x8e, 0x4d, 0xa1, 0xbc};
     uint32_t loop=0;
     uint8_t res = 0;
 
-    do_mult(column);
+    /* encrypt direction */
+    do_mult(column, MixColumns_Matrix);
 
     printf("\n");
     for (loop=0; loop<4; loop++)
@@ -567,4 +619,91 @@ void test_encrypt()
     }
 
     printf("\n\n test_encrypt: %u PASS - %u FAIL\n", pass, fail);
+}
+
+void test_decrypt()
+{
+    #define NB_ENC_TESTS (5U)
+    aes_ctxt_t ctxt;
+    uint32_t loop=0;
+    uint32_t loop_test=0;
+    uint8_t res = 0;
+    uint8_t pass =0;
+    uint8_t fail = 0;
+    uint8_t plain_text[16];
+    uint8_t * key;
+    uint8_t * cipher_text;
+    uint8_t * expected_plain_text;
+
+    /*
+     * NIST test vectors.
+     */
+    uint8_t a_key[NB_ENC_TESTS][AES_KEY_SIZE_BYTES] = {
+        {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0xff, 0xff, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+    };
+
+    uint8_t a_cipher_text[NB_ENC_TESTS][AES_BLOCK_SIZE_BYTES] = {
+        {0x3a, 0xd7, 0x8e, 0x72, 0x6c, 0x1e, 0xc0, 0x2b, 0x7e, 0xbf, 0xe9, 0x2b, 0x23, 0xd9, 0xec, 0x34},
+        {0xaa, 0xe5, 0x93, 0x9c, 0x8e, 0xfd, 0xf2, 0xf0, 0x4e, 0x60, 0xb9, 0xfe, 0x71, 0x17, 0xb2, 0xc2},
+        {0xf0, 0x31, 0xd4, 0xd7, 0x4f, 0x5d, 0xcb, 0xf3, 0x9d, 0xaa, 0xf8, 0xca, 0x3a, 0xf6, 0xe5, 0x27},
+        {0x8e, 0xe7, 0x9d, 0xd4, 0xf4, 0x01, 0xff, 0x9b, 0x7e, 0xa9, 0x45, 0xd8, 0x66, 0x66, 0xc1, 0x3b},
+        {0x26, 0x29, 0x8e, 0x9c, 0x1d, 0xb5, 0x17, 0xc2, 0x15, 0xfa, 0xdf, 0xb7, 0xd2, 0xa8, 0xd6, 0x91}
+    };
+
+    uint8_t a_expected_plain_text[NB_ENC_TESTS][AES_BLOCK_SIZE_BYTES]= {
+        {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0xff, 0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+    };
+
+    for (loop_test=0; loop_test<NB_ENC_TESTS; loop_test++)
+    {
+        key = a_key[loop_test];
+        cipher_text = a_cipher_text[loop_test];
+        expected_plain_text = a_expected_plain_text[loop_test];
+
+        res = aes_init(&ctxt, key, AES_KEY_SIZE_BYTES);
+
+        if (res == AES_INIT_SUCCESS)
+        {
+            res = aes_decrypt_block(&ctxt, cipher_text, plain_text);
+        }
+
+        if (res == AES_DECRYPT_SUCCESS)
+        {
+            for (loop=0; loop<16; loop++)
+            {
+                if ((loop % 4) ==0 )
+                {
+                    printf("\n");
+                }        
+                printf("%02x ", plain_text[loop]);
+
+                if (plain_text[loop] != expected_plain_text[loop])
+                {
+                    res = 0xFF;
+                    printf("<  ");            
+                }
+            }
+        }
+
+        if (res == AES_DECRYPT_SUCCESS)
+        {   
+            pass ++;
+        }
+        else
+        {
+            fail ++;
+        }
+
+        printf("\n");
+    }
+
+    printf("\n\n test_decrypt: %u PASS - %u FAIL\n", pass, fail);
 }

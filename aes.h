@@ -58,5 +58,16 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
 #define AES_ENCRYPT_SUCCESS  (0U)  /* block encrypted successfully */
 #define AES_ENCRYPT_NULL_PTR (1U)  /* one input pointer is NULL */
 
+/*
+ * Decrypt a block
+ * param ctxt : current context, previously initialized with aes_init [in]
+ * param cipher_text : input buffer to be decrypted (16 bytes) [in]
+ * param plain_text : output buffer with plain text, allocated by the caller (16 bytes) [out]
+ * return : 0 for success, >0 otherwise
+ */
+uint8_t aes_decrypt_block(aes_ctxt_t * ctxt, uint8_t * cipher_text, uint8_t * plain_text);
+#define AES_DECRYPT_SUCCESS  (0U)  /* block encrypted successfully */
+#define AES_DECRYPT_NULL_PTR (1U)  /* one input pointer is NULL */
+
 
 #endif /* AES_H */

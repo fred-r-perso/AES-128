@@ -16,9 +16,9 @@
 *.gch
 *.pch
 
-# Libraries
+# Libraries except .a to deliver libgf256
 *.lib
-*.a
+# *.a
 *.la
 *.lo
 

@@ -29,7 +29,11 @@
 
 /* AES128 only */
 #define KEY_LEN_WORDS (4U)   /* 4 uint32_t = 4 words */
-#define NB_KEY_ROUNDS (11U)  /* 11 key rounds for AES-128 */
+#define NB_KEY_ROUNDS (10U)  /* Initial round key addition + 10 key rounds for AES-128 */
+
+/* Encrypt or decrypt mode */
+#define DIRECTION_ENCRYPT (0U) /* use a function in encrypt mode */
+#define DIRECTION_DECRYPT (1U) /* use a function in decrypt mode */
 
 /* private functions prototypes */
 /* ---------------------------- */
@@ -43,10 +47,11 @@ void getRoundKey(uint32_t * expandedKey, uint8_t * roundKey, uint8_t round);
 void initialRound(uint8_t * text, uint8_t * roundKey);
 /* the AddRoundKey is the same code as initialRound */
 #define AddRoundKey(text, key) initialRound(text, key)
-void SubBytes(uint8_t * text);
+void SubBytes(uint8_t * text, uint8_t direction);
 void ShiftRows(uint8_t * text);
-void do_mult(uint8_t * column);
-void MixColumns(uint8_t * text);
+void InvShiftRows(uint8_t * text);
+void do_mult(uint8_t * column, const uint8_t * matrix);
+void MixColumns(uint8_t * text, uint8_t direction);
 
 /* local macros and defines */
 /* ------------------------ */
@@ -113,11 +118,20 @@ static inline uint8_t get_inverse_sbox_value(uint8_t x)
 
 /* Fixed matrix in GF(256) for MixColumns */
 /* -------------------------------------- */
-static const uint8_t MixColumns_Matrix[16] = { 
+/* not static for unit tests */
+const uint8_t MixColumns_Matrix[16] = { 
     0x02, 0x03, 0x01, 0x01,
     0x01, 0x02, 0x03, 0x01,
     0x01, 0x01, 0x02, 0x03,
     0x03, 0x01, 0x01, 0x02
+};
+
+/* reverse matrix */
+const uint8_t InvMixColumns_Matrix[16] = {
+    0x0e, 0x0b, 0x0d, 0x09,
+    0x09, 0x0e, 0x0b, 0x0d,
+    0x0d, 0x09, 0x0e, 0x0b,
+    0x0b, 0x0d, 0x09, 0x0e
 };
 
 /* Key expansion */
@@ -167,8 +181,11 @@ void KeyExpansion(uint32_t * expandedKey, uint32_t * key)
     uint32_t previous = 0;
     uint32_t loop = 0;
 
-    /* AES-128 : loop on the 44 words of the expanded key */
-    for (loop=0; loop<NB_KEY_ROUNDS*KEY_LEN_WORDS; loop++)
+    /* 
+     * AES-128 : loop on the 44 words of the expanded key 
+     * Initial key (round 0)+ 10 round keys (rounds 1 to 10) = 1+NB_KEY_ROUNDS = 11
+     */
+    for (loop=0; loop<(NB_KEY_ROUNDS+1)*KEY_LEN_WORDS; loop++)
     {
         /* AES-128 : the 16 first bytes (4 words) are the key itself */
         if (loop<KEY_LEN_WORDS)
@@ -212,9 +229,10 @@ void KeyExpansion(uint32_t * expandedKey, uint32_t * key)
 }
 
 /* 
- * For the AES algorithm as described in:
+ * For the implementation of the AES algorithm as described in:
  *     https://en.wikipedia.org/wiki/Advanced_Encryption_Standard#High-level_description_of_the_algorithm
  * we use bytes so we need to convert the key in an array of bytes.
+ *
  */
 void getRoundKey(uint32_t * expandedKey, uint8_t * roundKey, uint8_t round)
 {
@@ -256,23 +274,41 @@ void initialRound(uint8_t * text, uint8_t * roundKey)
 /* Rounds 1 to 10 */
 /* -------------- */
 /*
- * SubBytes – a non-linear substitution step where each byte is replaced with another according to a lookup table.
- * ShiftRows – a transposition step where the last three rows of the state are shifted cyclically a certain number of steps.
- * MixColumns – a linear mixing operation which operates on the columns of the state, combining the four bytes in each column.
- * AddRoundKey
+ * After initial round (round 0, see above)
  *
- * Round 10 is different : the MixColumns is not used
+ * Encrypt:
+ *   SubBytes – a non-linear substitution step where each byte is replaced with another according to a lookup table.
+ *   ShiftRows – a transposition step where the last three rows of the state are shifted cyclically a certain number of steps.
+ *   MixColumns – a linear mixing operation which operates on the columns of the state, combining the four bytes in each column.
+ *   AddRoundKey
+ *   Round 10 is different : the MixColumns is not used
+ *
+ * Decrypt:
+ *   InvShiftRows
+ *   InvSubBytes
+ *   AddRoundKey
+ *   InvMixColumns
+ *   Round 10 is different : the InvMixColumns is not used
+ *
  */
-void SubBytes(uint8_t * text)
+void SubBytes(uint8_t * text, uint8_t direction)
 {
     uint32_t loop=0;
 
     for (loop=0; loop<AES_BLOCK_SIZE_BYTES; loop++)
     {
-        text[loop] = get_sbox_value(text[loop]);
+        if (direction == DIRECTION_ENCRYPT)
+        {
+          text[loop] = get_sbox_value(text[loop]);
+        }
+        else
+        {
+          /* InvSubBytes */
+         text[loop] = get_inverse_sbox_value(text[loop]); 
+        }
     }
-
 }
+
 
 void ShiftRows(uint8_t * text)
 {
@@ -284,6 +320,8 @@ void ShiftRows(uint8_t * text)
     /* 
      * AES operates on a 4 × 4 column-major order array of bytes, termed the state.
      * So in memory, the consecutive bytes are the columns.
+     * A column is: text[0] text[1] text[2] text[3] ...etc for next columns...
+     * So a row is text[0] text[4] text[8] text[12] ...etc for next rows...
      */
 
     /* No change for the first row so loop=0 is skipped */
@@ -309,7 +347,7 @@ void ShiftRows(uint8_t * text)
         }
         else if (loop_row==2)
         {
-            /* Shift left by offset of 2*/
+            /* Shift left by offset of 2 */
             temp = row[0];
             row[0] = row[2];
             row[2] = temp;
@@ -342,7 +380,78 @@ void ShiftRows(uint8_t * text)
 }
 
 
-void do_mult(uint8_t * column)
+/* Create a separate function for the sake of legibility */
+void InvShiftRows(uint8_t * text)
+{
+    uint32_t loop_row;
+    uint32_t loop;
+    uint8_t temp;
+    uint8_t row[4];
+
+    /* 
+     * AES operates on a 4 × 4 column-major order array of bytes, termed the state.
+     * So in memory, the consecutive bytes are the columns.
+     * A column is: text[0] text[1] text[2] text[3] ...etc for next columns...
+     * So a row is text[0] text[4] text[8] text[12] ...etc for next rows...
+     */
+
+    /* No change for the first row so loop=0 is skipped */
+    for (loop_row=1; loop_row<4; loop_row++)
+    {
+        /* Recreate the row in consecutive memory slots */
+        row[0] = text[loop_row];
+        row[1] = text[loop_row+4];
+        row[2] = text[loop_row+8];
+        row[3] = text[loop_row+12];
+
+        if (loop_row==1)
+        {
+            /* Shift right by offset of 1*/
+            temp=row[3];
+
+            for (loop=3; loop>0; loop--)
+            {
+                row[loop] = row[loop-1];
+            }
+
+            row[0] = temp;          
+        }
+        else if (loop_row==2)
+        {
+            /* Shift right by offset of 2 */
+            temp = row[2];
+            row[2] = row[0];
+            row[0] = temp;
+            temp = row[3];
+            row[3] = row[1];
+            row[1] = temp;
+        }
+        else
+        {
+            /* 
+             * loop_row=3 
+             * Shift right by offset of 3 is the same as a shift left by offset of 1
+             */   
+            temp = row[0];
+
+            for (loop=0; loop<3; loop++)
+            {
+                row[loop] = row[loop+1];
+            }
+
+            row[3] = temp;
+        }
+
+        /* Update the text to have the representation in column-major order */
+        text[loop_row] = row[0];
+        text[loop_row+4] = row[1];
+        text[loop_row+8] = row[2];
+        text[loop_row+12] = row[3];        
+    }
+}
+
+
+void do_mult(uint8_t * column, const uint8_t * matrix)
 {
     uint32_t outer_loop=0;
     uint32_t inner_loop=0;
@@ -362,7 +471,7 @@ void do_mult(uint8_t * column)
              * Multiply the coeeficient of the column by the coefficient of the matrix in GF(256)
              * Add this result to the result of the previous round 
              */
-            res_vect[outer_loop] = add_poly(res_vect[outer_loop],mult_poly(column[inner_loop], MixColumns_Matrix[outer_loop*4+inner_loop]));
+            res_vect[outer_loop] = add_poly(res_vect[outer_loop],mult_poly(column[inner_loop], matrix[outer_loop*4+inner_loop]));
         }
     }
 
@@ -371,13 +480,14 @@ void do_mult(uint8_t * column)
 }
 
 
-void MixColumns(uint8_t * text)
+void MixColumns(uint8_t * text, uint8_t direction)
 {
     uint32_t loop=0;
     uint8_t column[4];
     /* 
      * AES operates on a 4 × 4 column-major order array of bytes, termed the state.
      * So in memory, the consecutive bytes are the columns.
+     * A column is: text[0] text[1] text[2] text[3] ...etc for next columns...
      */
 
     /* we have 4 columns */
@@ -389,11 +499,19 @@ void MixColumns(uint8_t * text)
         column[2] = text[loop*4+2];
         column[3] = text[loop*4+3];
 
-        /* 
-         * Multiply the column by MixColumns_Matrix in GF(256) 
-         * The column is updated.
-         */
-        do_mult(column);
+        if (direction == DIRECTION_ENCRYPT)
+        {
+          /* 
+          * Encrypt: Multiply the column by MixColumns_Matrix in GF(256) 
+          * The column is updated.
+          */
+          do_mult(column, MixColumns_Matrix);
+        }
+        else
+        {
+          /* Decrypt : InvMixColumns */
+         do_mult(column, InvMixColumns_Matrix); 
+        }
 
         /* Update the input text */
         text[loop*4] = column[0];
@@ -440,6 +558,7 @@ uint8_t aes_init(aes_ctxt_t * ctxt, uint8_t * key, uint8_t key_len)
     return(res);
 }
 
+
 uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cipher_text)
 {
     uint8_t res = AES_ENCRYPT_SUCCESS;
@@ -467,16 +586,16 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
         /* Initialize cipher_text with plain_text */
         if (cipher_text != plain_text)
         {
-            memcpy(cipher_text, plain_text, 16);
+            memcpy(cipher_text, plain_text, AES_BLOCK_SIZE_BYTES);
         }
-        /* else : decrypt in place */
+        /* else : encrypt in place */
 
         if (res == AES_ENCRYPT_SUCCESS)
         {
-            /* Get first round key */
+            /* Get first round key : index 0*/
             getRoundKey(ctxt->expKey, roundKey, round);
 
-            /* Initial round key addition */
+            /* Initial round key addition (round 0 is not part of the 10 AES-128 rounds) */
             initialRound(cipher_text, roundKey);
 
             LOG("\nafter initial round: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", 
@@ -485,11 +604,11 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
                 cipher_text[8], cipher_text[9], cipher_text[10], cipher_text[11], 
                 cipher_text[12], cipher_text[13], cipher_text[14], cipher_text[15]);
 
-            /* Start with round 1 */
+            /* Start repeating rounds from round 1 to round 10 */
             round ++;
 
             /* AES-128 : 9 rounds with full processing + 1 last round (1 to 10) */
-            while (round < 11)
+            while (round <= NB_KEY_ROUNDS)
             {
                 LOG("round %u input: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round,
                     cipher_text[0], cipher_text[1], cipher_text[2], cipher_text[3], 
@@ -498,7 +617,7 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
                     cipher_text[12], cipher_text[13], cipher_text[14], cipher_text[15]);
 
                 /* sub bytes */
-                SubBytes(cipher_text);
+                SubBytes(cipher_text, DIRECTION_ENCRYPT);
 
                 LOG("round %u SubBytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round,
                     cipher_text[0], cipher_text[1], cipher_text[2], cipher_text[3], 
@@ -517,9 +636,10 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
 
 
                 /* last round : no mix columns */
-                if (round != 10)
+                if (round != NB_KEY_ROUNDS)
                 {
-                    MixColumns(cipher_text);
+                    /* Not Round 10 */
+                    MixColumns(cipher_text, DIRECTION_ENCRYPT);
 
                     LOG("round %u MixColumns: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round, 
                         cipher_text[0], cipher_text[1], cipher_text[2], cipher_text[3], 
@@ -528,6 +648,7 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
                         cipher_text[12], cipher_text[13], cipher_text[14], cipher_text[15]);
 
                 }
+                /* else round 10: skip MixColumns */
 
                 /* add round key */
                 getRoundKey(ctxt->expKey, roundKey, round);
@@ -541,6 +662,103 @@ uint8_t aes_encrypt_block(aes_ctxt_t * ctxt, uint8_t * plain_text, uint8_t * cip
 
                 round ++;
             }
+        }
+    }
+
+    return(res);
+}
+
+
+uint8_t aes_decrypt_block(aes_ctxt_t * ctxt, uint8_t * cipher_text, uint8_t * plain_text)
+{
+    uint8_t res = AES_DECRYPT_SUCCESS;
+    uint8_t roundKey[AES_KEY_SIZE_BYTES];
+
+    if ( (ctxt == NULL) || (plain_text == NULL) || (cipher_text == NULL) )
+    {
+        res = AES_DECRYPT_NULL_PTR;
+    } 
+    else
+    {
+        uint32_t round=0;
+
+        /* Initialize plain_text with cipher_text */
+        if (cipher_text != plain_text)
+        {
+            memcpy(plain_text, cipher_text, AES_BLOCK_SIZE_BYTES);
+        }
+        /* else : decrypt in place */
+
+        if (res == AES_DECRYPT_SUCCESS)
+        {
+            /* Get last round key for decrypt */
+            getRoundKey(ctxt->expKey, roundKey, NB_KEY_ROUNDS-round);
+
+            /* Initial round key addition (round=0) : take the last round key for decrypt */
+            initialRound(plain_text, roundKey);
+
+            LOG("\nafter initial round: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", 
+                plain_text[0], plain_text[1], plain_text[2], plain_text[3], 
+                plain_text[4], plain_text[5], plain_text[6], plain_text[7],
+                plain_text[8], plain_text[9], plain_text[10], plain_text[11], 
+                plain_text[12], plain_text[13], plain_text[14], plain_text[15]);
+
+            /* Start repeating rounds from round 1 */
+            round ++;
+
+            /* AES-128 : 9 rounds with full processing + 1 last round (1 to 10) */
+            while (round <= NB_KEY_ROUNDS)
+            {
+                LOG("round %u input: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round,
+                    plain_text[0], plain_text[1], plain_text[2], plain_text[3], 
+                    plain_text[4], plain_text[5], plain_text[6], plain_text[7],
+                    plain_text[8], plain_text[9], plain_text[10], plain_text[11], 
+                    plain_text[12], plain_text[13], plain_text[14], plain_text[15]);
+
+                /* reverse shift rows */
+                InvShiftRows(plain_text);
+
+                LOG("round %u InvShiftRows: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round, 
+                    plain_text[0], plain_text[1], plain_text[2], plain_text[3], 
+                    plain_text[4], plain_text[5], plain_text[6], plain_text[7],
+                    plain_text[8], plain_text[9], plain_text[10], plain_text[11], 
+                    plain_text[12], plain_text[13], plain_text[14], plain_text[15]);
+
+
+                /* sub bytes */
+                SubBytes(plain_text, DIRECTION_DECRYPT);
+
+                LOG("round %u InvSubBytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round,
+                    plain_text[0], plain_text[1], plain_text[2], plain_text[3], 
+                    plain_text[4], plain_text[5], plain_text[6], plain_text[7],
+                    plain_text[8], plain_text[9], plain_text[10], plain_text[11], 
+                    plain_text[12], plain_text[13], plain_text[14], plain_text[15]);
+
+                /* add round key */
+                getRoundKey(ctxt->expKey, roundKey, NB_KEY_ROUNDS-round);
+                AddRoundKey(plain_text, roundKey);
+
+                LOG("round %u AddRoundKey: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round, 
+                    plain_text[0], plain_text[1], plain_text[2], plain_text[3], 
+                    plain_text[4], plain_text[5], plain_text[6], plain_text[7],
+                    plain_text[8], plain_text[9], plain_text[10], plain_text[11], 
+                    plain_text[12], plain_text[13], plain_text[14], plain_text[15]);                
+
+                /* last round : no mix columns */
+                if (round != NB_KEY_ROUNDS)
+                {
+                    MixColumns(plain_text, DIRECTION_DECRYPT);
+
+                    LOG("round %u InvMixColumns: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", round, 
+                        plain_text[0], plain_text[1], plain_text[2], plain_text[3], 
+                        plain_text[4], plain_text[5], plain_text[6], plain_text[7],
+                        plain_text[8], plain_text[9], plain_text[10], plain_text[11], 
+                        plain_text[12], plain_text[13], plain_text[14], plain_text[15]);
+
+                }
+
+                round ++;
+            }            
         }
     }
 
