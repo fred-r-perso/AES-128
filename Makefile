@@ -1,6 +1,6 @@
 CC=gcc
 AR=ar
-CFLAGS=-Wall
+CFLAGS=-Wall -DAES_CBC
 LDFLAGS=-L ./libgf256
 LDLIBS=-lgf256
 INC=-I ./libgf256
