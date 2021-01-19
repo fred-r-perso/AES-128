@@ -1,6 +1,6 @@
 CC=gcc
 AR=ar
-CFLAGS=-Wall -DAES_CBC
+CFLAGS=-Wall -DAES_CBC -DAES_CTR
 LDFLAGS=-L ./libgf256
 LDLIBS=-lgf256
 INC=-I ./libgf256
@@ -8,7 +8,7 @@ EXEC=aestest
 LIB=libaes.a
 SRC=$(wildcard *.c)
 OBJ=$(SRC:.c=.o)
-TESTSUITE_SOURCE := aes_test.c aes_cbc_test.c
+TESTSUITE_SOURCE := aes_test.c aes_cbc_test.c aes_ctr_test.c
 LIB_SRC=$(filter-out $(TESTSUITE_SOURCE),$(wildcard *.c))
 LIB_OBJ=$(LIB_SRC:.c=.o)
 

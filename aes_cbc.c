@@ -27,10 +27,12 @@
 
 #if defined(AES_CBC)
 
-static void do_aes_block_xor(uint8_t * a, uint8_t * b);
 
-/* Helper functions */
-/* ---------------- */
+
+/* Helper function(s) */
+/* ------------------ */
+
+static void do_aes_block_xor(uint8_t * out, uint8_t * in);
 
 static void do_aes_block_xor(uint8_t * out, uint8_t * in)
 {

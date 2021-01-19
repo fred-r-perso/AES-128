@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include "aes.h"
 #include "aes_cbc_test.h"
+#include "aes_ctr_test.h"
 
 /* private functions of the lib */
 /* ---------------------------- */
@@ -76,6 +77,11 @@ int main()
     /* CBC mode of operation */
     test_cbc_encrypt();
     test_cbc_decrypt();
+
+    /* CTR mode of operation */
+    test_ctr_encrypt();
+    test_ctr_decrypt();
+    test_ctr_counter();
 
     return(0);
 }
