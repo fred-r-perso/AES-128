@@ -40,7 +40,11 @@ void KeyExpansion(uint32_t * expandedKey, uint32_t * key);
 void getRoundKey(uint32_t * expandedKey, uint8_t * roundKey, uint8_t round);
 void ShiftRows(uint8_t * text);
 void InvShiftRows(uint8_t * text);
+#if defined(LOOKUP_GF256)
+void do_mult_encrypt(uint8_t * column);
+#else
 void do_mult(uint8_t * column, const uint8_t * matrix);
+#endif /* LOOKUP_GF256 */
 
 /* test functions prototypes */
 /* ------------------------- */
@@ -446,15 +450,21 @@ void test_InvShiftRows()
 
 void test_do_mult()
 {
+#if !defined(LOOKUP_GF256)
     extern uint8_t MixColumns_Matrix[16];
+#endif /* LOOKUP_GF256 */
     /* test vectors : https://en.wikipedia.org/wiki/Rijndael_MixColumns#Test_vectors_for_MixColumn() */
     uint8_t column[4] = {0xdb, 0x13, 0x53, 0x45};
     uint8_t mixed_column[4] = {0x8e, 0x4d, 0xa1, 0xbc};
     uint32_t loop=0;
     uint8_t res = 0;
 
+#if defined(LOOKUP_GF256)
+    do_mult_encrypt(column);
+#else
     /* encrypt direction */
     do_mult(column, MixColumns_Matrix);
+#endif /* LOOKUP_GF256 */    
 
     printf("\n");
     for (loop=0; loop<4; loop++)
